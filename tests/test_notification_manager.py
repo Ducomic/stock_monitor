@@ -138,3 +138,28 @@ class TestConfig:
         result = notif_mgr.test_channel("nonexistent")
         assert result["ok"] is False
         assert "不存在" in result["message"]
+
+
+class TestSendReportSummary:
+    """报告摘要推送测试。"""
+
+    def test_summary_skips_email_channel(self, notif_mgr):
+        """摘要不发给 email（email 收完整 HTML 报告），其他渠道正常发送。"""
+        gotify = MagicMock()
+        gotify.send.return_value = True
+        notif_mgr._channels["gotify"] = gotify
+
+        results = notif_mgr.send_report_summary("收盘小结", "持仓 1 只")
+        assert "email" not in results
+        assert results["gotify"] is True
+        gotify.send.assert_called_once()
+
+    def test_summary_same_title_not_blocked_by_interval(self, notif_mgr):
+        """同标题摘要逐渠道广播，不受'相同标题间隔'限制。"""
+        gotify = MagicMock()
+        gotify.send.return_value = True
+        notif_mgr._channels["gotify"] = gotify
+
+        assert notif_mgr.send_report_summary("收盘小结", "摘要1")["gotify"] is True
+        assert notif_mgr.send_report_summary("收盘小结", "摘要2")["gotify"] is True
+        assert gotify.send.call_count == 2

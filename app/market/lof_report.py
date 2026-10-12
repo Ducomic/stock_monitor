@@ -1,8 +1,23 @@
 """
-LOF 溢价率 HTML 报告生成器。
+LOF 溢价率报告生成器（HTML 邮件 + 纯文本推送摘要）。
 """
 from datetime import datetime
 import pandas as pd
+
+
+def _fmt_amount(v) -> str:
+    """成交额转可读格式（亿/万/元）。"""
+    try:
+        a = float(v or 0)
+    except (TypeError, ValueError):
+        return "-"
+    if a != a:  # NaN
+        return "-"
+    if a >= 1e8:
+        return f"{a / 1e8:.2f}亿"
+    if a >= 1e4:
+        return f"{a / 1e4:.0f}万"
+    return f"{a:.0f}元"
 
 
 def build_html_table(df) -> str:
@@ -99,3 +114,62 @@ def build_report(df, alerts: list | None = None, premium_threshold: float = 5.0)
         f"</div></body></html>"
     )
     return body
+
+
+def build_report_text(df, alerts: list | None = None,
+                      threshold: float = 5.0, top_n: int = 5) -> str:
+    """生成 LOF 日报纯文本摘要（供 Gotify 等移动端推送渠道，完整 HTML 仍走邮件）。
+
+    输出示例::
+
+        42 只 LOF · 溢价≥5%: 3 · 折价≤-3%: 1
+        套利预警 2 只
+        160105[南方LOF] +8.89% 成交1.25亿
+        溢价 Top 4
+        1. 160706 嘉实LOF +10.82%
+    """
+    empty = df is None or df.empty
+    lines = []
+
+    # 概览
+    if empty:
+        lines.append("暂无 LOF 数据")
+    else:
+        total = len(df)
+        if "premium_rate" in df.columns:
+            pr = pd.to_numeric(df["premium_rate"], errors="coerce").fillna(0)
+            p = int((pr >= threshold).sum())
+            d = int((pr <= -3).sum())
+        else:
+            p = d = 0
+        lines.append(f"{total} 只 LOF · 溢价≥{threshold:g}%: {p} · 折价≤-3%: {d}")
+
+    # 套利/预警清单
+    if alerts is None:
+        pass
+    elif not alerts:
+        lines.append("当前无可套利标的")
+    else:
+        lines.append(f"套利预警 {len(alerts)} 只")
+        for a in alerts[:top_n]:
+            if not isinstance(a, dict):
+                continue
+            sym, name = a.get("symbol", ""), a.get("name", "")
+            pr = a.get("premium_rate")
+            pr_s = f"{float(pr):+.2f}%" if pr is not None else "-"
+            lines.append(f"{sym}[{name}] {pr_s} 成交{_fmt_amount(a.get('amount'))}")
+
+    # 溢价 Top N
+    if not empty and "premium_rate" in df.columns:
+        top = df.copy()
+        top["premium_rate"] = pd.to_numeric(top["premium_rate"], errors="coerce")
+        top = top.dropna(subset=["premium_rate"]).nlargest(top_n, "premium_rate")
+        if len(top):
+            lines.append("")
+            lines.append(f"溢价 Top {len(top)}")
+            for i, (_, r) in enumerate(top.iterrows(), 1):
+                lines.append(
+                    f"{i}. {r.get('symbol', '')} {r.get('name', '')} {float(r['premium_rate']):+.2f}%"
+                )
+
+    return "\n".join(lines)

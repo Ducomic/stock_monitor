@@ -66,6 +66,11 @@ notification:
       password: your-smtp-auth-code
       recipients:
       - your-email@qq.com
+    gotify:
+      enabled: false
+      name: Gotify
+      server_url: http://gotify.example.com:8080
+      app_token: ${GOTIFY_APP_TOKEN}
 lof:
   enabled: true
   premium_threshold: 5.0

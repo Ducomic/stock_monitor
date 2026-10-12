@@ -43,8 +43,9 @@
                             <p class="font-medium text-gray-700 text-sm" x-text="ch.name"></p>
                             <p class="text-xs text-gray-400 mt-0.5 font-mono">
                                 <span x-show="ch.webhook_url" x-text="ch.webhook_url"></span>
-                                <span x-show="!ch.webhook_url && ch.username" x-text="ch.username + ' -> ' + (ch.recipients||[]).join(',')"></span>
-                                <span x-show="!ch.webhook_url && !ch.username">（未配置）</span>
+                                <span x-show="!ch.webhook_url && ch.config?.server_url" x-text="ch.config.server_url"></span>
+                                <span x-show="!ch.webhook_url && !ch.config?.server_url && ch.username" x-text="ch.username + ' -> ' + (ch.recipients||[]).join(',')"></span>
+                                <span x-show="!ch.webhook_url && !ch.config?.server_url && !ch.username">（未配置）</span>
                             </p>
                         </div>
                     </div>
@@ -139,13 +140,15 @@
     <div x-show="editingChannel" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="editingChannel=null">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 fade-in">
             <h3 class="font-bold text-gray-800 mb-4" x-text="'编辑渠道: ' + (config.channels[editingChannel]?.name || '')"></h3>
-            <div class="mb-4">
+            <!-- Webhook URL（Gotify 渠道无此字段） -->
+            <div x-show="editingChannel !== 'gotify'" class="mb-4">
                 <label class="text-sm text-gray-500 block mb-1">Webhook URL</label>
                 <input type="text" x-model="editForm.webhook_url"
                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
                        placeholder="https://...">
             </div>
-            <template x-if="editForm.smtp_host !== undefined">
+            <!-- SMTP 字段组（仅邮件渠道） -->
+            <template x-if="editingChannel === 'email'">
                 <div>
                     <label class="text-sm text-gray-500 block mb-1">SMTP 服务器</label>
                     <input type="text" x-model="editForm.smtp_host"
@@ -162,6 +165,18 @@
                     <label class="text-sm text-gray-500 block mb-1">收件人（逗号分隔）</label>
                     <input type="text" x-model="editForm.recipients"
                            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3">
+                </div>
+            </template>
+            <!-- Gotify 字段组（仅 Gotify 渠道） -->
+            <template x-if="editingChannel === 'gotify'">
+                <div>
+                    <label class="text-sm text-gray-500 block mb-1">服务器地址</label>
+                    <input type="text" x-model="editForm.server_url"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3 font-mono"
+                           placeholder="http://gotify.example.com:8080">
+                    <label class="text-sm text-gray-500 block mb-1">App Token</label>
+                    <input type="password" x-model="editForm.app_token" placeholder="留空则不修改"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3 font-mono">
                 </div>
             </template>
             <div class="flex gap-2 justify-end">
@@ -226,11 +241,20 @@ function pushSettings() {
             const cfg = ch.config || {};
             this.editForm = {
                 webhook_url: ch.webhook_url || '',
-                username: ch.username || '',
-                recipients: ch.recipients ? ch.recipients.join(', ') : '',
-                smtp_host: cfg.smtp_host || '',
-                smtp_port: cfg.smtp_port || 465,
+                server_url: cfg.server_url || '',
+                // app_token 后端已脱敏不下发，编辑时始终显示为空占位
+                app_token: '',
             };
+            // 邮件专属字段仅 email 渠道携带，
+            // 避免 smtp_port 等默认值写入其他渠道的配置块
+            if (key === 'email') {
+                Object.assign(this.editForm, {
+                    username: ch.username || '',
+                    recipients: ch.recipients ? ch.recipients.join(', ') : '',
+                    smtp_host: cfg.smtp_host || '',
+                    smtp_port: cfg.smtp_port || 465,
+                });
+            }
         },
         saveChannelEdit() {
             if (!this.editingChannel) return;
@@ -238,8 +262,9 @@ function pushSettings() {
             if (typeof data.recipients === 'string') {
                 data.recipients = data.recipients.split(/[,，\s]+/).filter(Boolean);
             }
-            // 移除空密码（不覆盖原值）
+            // 移除空密码 / 空 App Token（不覆盖原值）
             if (!data.password) delete data.password;
+            if (!data.app_token) delete data.app_token;
             Object.assign(this.config.channels[this.editingChannel], data);
             this.editingChannel = null;
         }

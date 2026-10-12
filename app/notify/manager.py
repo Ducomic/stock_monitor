@@ -93,6 +93,10 @@ class NotificationManager:
             from app.notify.email_ import EmailNotifier
             self._channels["email"] = EmailNotifier(cfg)
 
+        if cfg.gotify_enabled:
+            from app.notify.gotify import GotifyNotifier
+            self._channels["gotify"] = GotifyNotifier(cfg)
+
     def get_channel_status(self) -> dict[str, dict]:
         """获取所有渠道的状态信息。"""
         with self._lock:
@@ -106,7 +110,7 @@ class NotificationManager:
                     "webhook_url": self._mask_url(ch_cfg.get("webhook_url", "")),
                     "connected": notifier is not None,
                     "config": {k: v for k, v in ch_cfg.items()
-                              if k not in ("webhook_url", "password", "username", "recipients")},
+                              if k not in ("webhook_url", "password", "username", "recipients", "app_token")},
                 }
                 if "username" in ch_cfg:
                     result[key]["username"] = self._mask_str(ch_cfg["username"])
@@ -131,7 +135,8 @@ class NotificationManager:
         with self._lock:
             return self._send_unlocked(channel_key, notification)
 
-    def _send_unlocked(self, channel_key: str, notification: Notification) -> bool:
+    def _send_unlocked(self, channel_key: str, notification: Notification,
+                       check_interval: bool = True) -> bool:
         if channel_key not in self._channels:
             logger.warning(f"渠道不存在: {channel_key}")
             return False
@@ -152,7 +157,9 @@ class NotificationManager:
         # 用标题前缀做 key（去掉动态计数如 "(5买 18卖)"），避免每次计数变化导致匹配失败
         import re
         title_key = re.sub(r'\(\d+.*?\)', '', notification.title).strip()
-        if title_key in self._title_timestamps:
+        # 相同标题间隔按 title 全局去重、不区分渠道；报告摘要等需要
+        # 同标题逐渠道广播的场景传 check_interval=False 跳过检查
+        if check_interval and title_key in self._title_timestamps:
             elapsed = (time.time() - self._title_timestamps[title_key]) / 60.0
             if elapsed < interval:
                 self._record_history(channel_key, notification, False,
@@ -216,6 +223,33 @@ class NotificationManager:
             self._record_history(channel_key, notification, False, str(e))
             return False
 
+    def send_report_summary(self, title: str, text: str) -> dict[str, bool]:
+        """将定时报告的纯文本摘要推送给除 email 外的已启用渠道。
+
+        email 渠道会单独收到完整 HTML 报告（见 send_report），
+        为避免重复，本方法只向 gotify / 企业微信等移动端渠道推送纯文本摘要。
+        使用 WARNING 级别的 Notification 绕过免打扰时段（与 send_report 行为一致），
+        并走 _send_unlocked 以复用推送历史记录。
+
+        Args:
+            title: 摘要标题。
+            text: 纯文本摘要内容。
+
+        Returns:
+            {渠道标识: 是否发送成功}。
+        """
+        notification = Notification(title=title, content=text, level=NotifyLevel.WARNING)
+
+        with self._lock:
+            keys = [k for k in self._channels if k != "email"]
+            results = {}
+            for key in keys:
+                # 同一标题依次发给多个渠道，跳过"相同标题间隔"检查
+                # （该检查按 title 全局去重、不区分渠道，会误拦后续渠道）
+                # 每小时上限与历史记录仍正常生效
+                results[key] = self._send_unlocked(key, notification, check_interval=False)
+            return results
+
     def test_channel(self, channel_key: str) -> dict:
         """测试指定渠道是否可用。
 
@@ -235,7 +269,7 @@ class NotificationManager:
         notifier = self._channels[channel_key]
         try:
             ok = notifier.send(test)
-            return {"ok": ok, "message": "发送成功" if ok else "发送失败，请检查 Webhook 配置"}
+            return {"ok": ok, "message": "发送成功" if ok else "发送失败，请检查渠道配置"}
         except Exception as e:
             return {"ok": False, "message": f"发送异常: {str(e)}"}
 
@@ -320,7 +354,8 @@ class NotificationManager:
                         channels_cfg[key]["enabled"] = ch_data["enabled"]
                     if "webhook_url" in ch_data and ch_data.get("webhook_url"):
                         channels_cfg[key]["webhook_url"] = ch_data["webhook_url"]
-                    for f in ("username", "password", "recipients", "smtp_host", "smtp_port"):
+                    for f in ("username", "password", "recipients", "smtp_host", "smtp_port",
+                              "server_url", "app_token"):
                         if f in ch_data and ch_data[f]:
                             channels_cfg[key][f] = ch_data[f]
                     self._init_channels()

@@ -20,6 +20,7 @@
 - [x] **大盘择时**：510300 基准，MA200 下方禁止买入，MA60 下方信号打折
 - [x] **LOF 套利监测**：溢价率计算 + 成交额 + 申购状态 + 限额，可套利一键筛选
 - [x] **邮件推送**：实时交易信号、LOF 日报（14:30）、收盘小结（15:01），免打扰 + 频率控制
+- [x] **Gotify 推送**：自托管 Push 服务，实时信号 + 收盘/LOF 摘要，优先级分级（info=2/warning=5/critical=8）
 - [x] **信号降噪**：同标的同日同方向去重，强度阈值过滤，过滤信号单独记录
 - [x] **持仓管理**：手动记录真实买卖，卖出信号自动匹配持仓
 - [x] **Web 管理台**：Flask + Jinja2 + Alpine.js + Tailwind CSS，12 个功能页面
@@ -55,6 +56,25 @@ notification:
       recipients:
         - your-email@qq.com
 ```
+
+**（可选）配置 Gotify 推送**（`config.yaml`）：
+
+Gotify 是开源自托管推送服务（[gotify.net](https://gotify.net)），需先在服务器部署 Gotify Server，再在其 Web 管理台创建 App 获得 `app_token`：
+
+```yaml
+notification:
+  channels:
+    gotify:
+      enabled: true
+      name: Gotify
+      server_url: http://gotify-server:8080
+      app_token: ${GOTIFY_APP_TOKEN}
+```
+
+- `app_token` 支持通过 `.env` 注入环境变量 `GOTIFY_APP_TOKEN`
+- 实时信号自动推送，收盘小结 / LOF 日报推送纯文本摘要，完整 HTML 报告仍通过邮件发送
+- 已有用户的 `config.yaml` 需手动添加 gotify 配置块后，Gotify 渠道才会出现在 Web 推送配置页
+- 注意：配置加载时会先解析环境变量占位符，在 Web 推送配置页保存后，`${GOTIFY_APP_TOKEN}` 等占位会被解析后的实际值写回 `config.yaml`
 
 **配置自选股**（`config.yaml`）：
 
@@ -100,11 +120,11 @@ python tests/test_previews.py  # 输出到 templates/email/
        └───────────────────┼───────────────────┘
                            │
        ┌───────────────────┼───────────────────┐
-  ┌────▼────┐      ┌───────▼──────┐     ┌─────▼─────┐
-  │ Market  │      │  Strategy    │     │  Notify   │
-  │ 行情采集 │      │  策略沙箱    │     │  消息推送  │
-  │ (Sina)  │      │  (exec 沙箱) │     │  (SMTP)   │
-  └─────────┘      └──────────────┘     └───────────┘
+  ┌────▼────┐      ┌───────▼──────┐     ┌──────▼──────────────┐
+  │ Market  │      │  Strategy    │     │  Notify             │
+  │ 行情采集 │      │  策略沙箱    │     │  消息推送           │
+  │ (Sina)  │      │  (exec 沙箱) │     │  (SMTP/WeCom/Gotify)│
+  └─────────┘      └──────────────┘     └─────────────────────┘
 ```
 
 **主循环数据流**：APScheduler 10 秒心跳 → 交易时段判断 → Sina 实时行情 + K线缓存(SQLite) → 8 策略 × N 标的 → 强度过滤 + 去重 + 大盘择时 → 信号入库 + 邮件推送
@@ -121,8 +141,8 @@ python tests/test_previews.py  # 输出到 templates/email/
 | 行情 | akshare + Sina API |
 | LLM | OpenAI SDK（DeepSeek / 通义千问 / 智谱 / Ollama 等） |
 | 配置 | PyYAML + python-dotenv + pydantic |
-| 推送 | SMTP（SSL/TLS 自适应） |
-| 测试 | pytest（161 项） |
+| 推送 | SMTP / 企业微信机器人 / Gotify |
+| 测试 | pytest（217 项） |
 
 ## 目录结构
 
@@ -162,7 +182,8 @@ stock_monitor/
 │   │   ├── base.py                  # BaseNotifier：抽象基类 + 频率控制
 │   │   ├── manager.py               # NotificationManager：多渠道统一管理
 │   │   ├── email_.py                # EmailNotifier：SMTP SSL/TLS
-│   │   └── wecom.py                 # WeComNotifier：企业微信机器人
+│   │   ├── wecom.py                 # WeComNotifier：企业微信机器人
+│   │   └── gotify.py                # GotifyNotifier：Gotify 推送
 │   ├── backtest/
 │   │   ├── engine.py                # BacktestEngine：逐日回测 + 组合 + 对比
 │   │   └── metrics.py               # 绩效指标（夏普/回撤/胜率/盈亏比）
@@ -170,7 +191,7 @@ stock_monitor/
 │       ├── server.py                # Flask 路由 + 30+ REST API
 │       └── templates/               # Jinja2 页面（12 个）
 ├── templates/email/                 # 邮件 HTML 预览
-├── tests/                           # pytest 测试（161 项）
+├── tests/                           # pytest 测试（217 项）
 │   ├── test_previews.py             # 邮件预览生成
 │   ├── test_backtest.py             # 回测引擎测试
 │   ├── test_positions.py            # 持仓存储测试
@@ -197,6 +218,7 @@ stock_monitor/
 | `notification.quiet_hours` | 23-7 | 免打扰时段 |
 | `notification.frequency.min_interval_minutes` | 10 | 同标题最小推送间隔 |
 | `notification.frequency.max_per_hour` | 0 | 每小时最大推送数（0=不限） |
+| `notification.channels.gotify.enabled` | false | Gotify 推送开关（需先在 config.yaml 添加 gotify 配置块） |
 | `web.host` | 0.0.0.0 | Web 监听地址 |
 | `web.port` | 5000 | Web 监听端口 |
 | `web.password` | admin123 | **务必修改** |
@@ -249,6 +271,8 @@ def strategy(context: dict, data: pd.DataFrame) -> dict:
 | 交易时段每 10 分钟 | `[自选] 交易信号` / `交易信号` | 实时买入/卖出触发 |
 | 14:30 | `LOF 日报` | 全市场溢价榜 + 可套利预警 |
 | 15:01 | `收盘小结` | 持仓全景 + 信号回顾 + 需关注 + 接近触发 |
+
+> 开启对应渠道时，以上通知同时通过企业微信机器人与 Gotify 推送（Gotify 优先级：info=2 / warning=5 / critical=8）；完整 HTML 报告仅邮件发送。
 
 ## 许可证
 

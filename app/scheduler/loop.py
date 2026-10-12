@@ -32,7 +32,7 @@ from app.strategy.engine import StrategyEngine
 from app.strategy.policy import StrategyExecutionState, StrategyPolicy
 from app.symbols.manager import SymbolManager
 from app.trade.positions import PositionStore
-from app.scheduler.summary import build_closing_summary
+from app.scheduler.summary import build_closing_summary, build_closing_summary_text
 
 logger = logging.getLogger(__name__)
 
@@ -561,13 +561,20 @@ class MonitorLoop:
             # 通过通知渠道推送 (HTML)
             self._notify_mgr.send_report("email", "收盘小结", body)
             logger.info("收盘小结已发送")
+
+            # 纯文本摘要推送（Gotify 等移动端渠道），失败仅记日志、不影响邮件
+            try:
+                summary_text = build_closing_summary_text(pos_with_pnl, signals_today, quotes)
+                self._notify_mgr.send_report_summary("收盘小结", summary_text)
+            except Exception as e:
+                logger.error(f"收盘小结摘要推送失败: {e}")
         except Exception as e:
             logger.error(f"收盘小结生成失败: {e}", exc_info=True)
 
     def _send_lof_report(self) -> None:
         """发送 LOF 溢价率日报 + 可套利预警。"""
         from app.market.lof_data import LOFDataProvider
-        from app.market.lof_report import build_report
+        from app.market.lof_report import build_report, build_report_text
 
         try:
             provider = LOFDataProvider(self._config.lof)
@@ -590,6 +597,15 @@ class MonitorLoop:
                 logger.info(f"LOF 日报已发送: {len(df)} 只, {len(alerts)} 条预警")
             else:
                 logger.error("LOF 日报发送失败")
+
+            # 纯文本摘要推送（Gotify 等移动端渠道），失败仅记日志、不影响邮件
+            try:
+                self._notify_mgr.send_report_summary(
+                    "LOF 日报",
+                    build_report_text(df, alerts, self._config.lof.premium_threshold),
+                )
+            except Exception as e:
+                logger.error(f"LOF 日报摘要推送失败: {e}")
         except Exception as e:
             logger.error(f"LOF 日报发送异常: {e}", exc_info=True)
 

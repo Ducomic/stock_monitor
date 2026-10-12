@@ -1,4 +1,4 @@
-"""收盘小结 HTML 生成器。"""
+"""收盘小结 HTML/纯文本生成器。"""
 import logging; logger = logging.getLogger(__name__)
 import html as _html
 from datetime import datetime
@@ -8,6 +8,32 @@ import pandas as pd
 def _esc(text: str) -> str:
     """转义 HTML 特殊字符（< > &）。"""
     return _html.escape(str(text), quote=False)
+
+
+def _num(v, default: float = 0.0) -> float:
+    """安全转 float（None/非法值/NaN 返回 default）。"""
+    try:
+        f = float(v)
+        return default if f != f else f
+    except (TypeError, ValueError):
+        return default
+
+
+def _names_from_quotes(quotes) -> dict:
+    """从行情 DataFrame 提取 代码→名称 映射（去掉 sh/sz 前缀）。"""
+    nm = {}
+    if quotes is None or getattr(quotes, "empty", True):
+        return nm
+    sc = "symbol" if "symbol" in quotes.columns else "代码"
+    nc = "name" if "name" in quotes.columns else "名称"
+    for _, r in quotes.iterrows():
+        s = str(r.get(sc, ""))
+        if len(s) > 6:
+            s = s[2:]
+        nv = str(r.get(nc, ""))
+        if nv and nv != s and nv != "nan":
+            nm[s] = nv
+    return nm
 
 
 def _n(code, nm):
@@ -57,15 +83,7 @@ def _ind(p, gh):
 
 def build_closing_summary(quotes, active_symbols, signals_today, positions_with_pnl,
                           strategies, get_history_fn, signal_reviews=None, signal_stats=None):
-    sc = "symbol" if "symbol" in quotes.columns else "代码"
-    nc = "name" if "name" in quotes.columns else "名称"
-    nm = {}
-    for _,r in quotes.iterrows():
-        s = str(r.get(sc,""))
-        if len(s) > 6: s = s[2:]
-        nv = str(r.get(nc,""))
-        if nv and nv != s and nv != "nan":
-            nm[s] = nv
+    nm = _names_from_quotes(quotes)
 
     # Also fill names from active symbols' meta
     now = datetime.now()
@@ -179,6 +197,50 @@ def build_closing_summary(quotes, active_symbols, signals_today, positions_with_
 {"".join(body)}
 </div>"""
     return html
+
+
+def build_closing_summary_text(positions_with_pnl, signals_today=None,
+                               quotes=None, max_positions: int = 6) -> str:
+    """生成收盘小结纯文本摘要（供 Gotify 等移动端推送渠道，完整 HTML 仍走邮件）。
+
+    输出示例::
+
+        持仓 2 只 · 总盈亏 +100.00 (+0.9%)
+        601398[工商银行] 成本4.80 现价5.10 +6.3% (+300.00)
+        今日信号 2买 1卖
+    """
+    positions = list(positions_with_pnl or [])
+    signals = [s for s in (signals_today or []) if isinstance(s, dict)]
+    nm = _names_from_quotes(quotes)
+
+    lines = []
+    if positions:
+        total_pnl = sum(_num(p.get("pnl")) for p in positions)
+        total_cost = sum(_num(p.get("cost")) * _num(p.get("shares")) for p in positions)
+        head = f"持仓 {len(positions)} 只 · 总盈亏 {total_pnl:+.2f}"
+        if total_cost > 0:
+            head += f" ({total_pnl / total_cost * 100:+.1f}%)"
+        lines.append(head)
+        for p in positions[:max_positions]:
+            sym = str(p.get("symbol", ""))
+            name = p.get("name") or nm.get(sym) or ""
+            label = f"{sym}[{name}]" if name and name != "nan" else sym
+            lines.append(
+                f"{label} 成本{_num(p.get('cost')):.2f} 现价{_num(p.get('price')):.2f} "
+                f"{_num(p.get('pnl_pct')):+.1f}% ({_num(p.get('pnl')):+.2f})"
+            )
+        if len(positions) > max_positions:
+            lines.append(f"...另有 {len(positions) - max_positions} 只")
+    else:
+        lines.append("无持仓")
+
+    if signals:
+        buy_n = sum(1 for s in signals if s.get("action") == "buy")
+        sell_n = sum(1 for s in signals if s.get("action") == "sell")
+        lines.append("")
+        lines.append(f"今日信号 {buy_n}买 {sell_n}卖")
+
+    return "\n".join(lines)
 
 
 def _movers(quotes, nm):

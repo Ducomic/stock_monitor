@@ -22,6 +22,8 @@ config.yaml
 # Data (generated at runtime)
 data/kline.db
 data/kline_old.db
+data/market_cache.db
+data/test/
 data/strategies/strategies.db
 data/strategies/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].py
 data/positions.json

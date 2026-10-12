@@ -259,6 +259,14 @@ class AppConfig:
     def email_config(self) -> dict:
         return self._raw_notification.get("channels", {}).get("email", {})
 
+    @property
+    def gotify_enabled(self) -> bool:
+        return self._raw_notification.get("channels", {}).get("gotify", {}).get("enabled", False)
+
+    @property
+    def gotify_config(self) -> dict:
+        return self._raw_notification.get("channels", {}).get("gotify", {})
+
     @classmethod
     def get_instance(cls, config_path: str | None = None) -> "AppConfig":
         if cls._instance is None:

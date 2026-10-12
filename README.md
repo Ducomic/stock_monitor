@@ -142,7 +142,7 @@ python tests/test_previews.py  # 输出到 templates/email/
 | LLM | OpenAI SDK（DeepSeek / 通义千问 / 智谱 / Ollama 等） |
 | 配置 | PyYAML + python-dotenv + pydantic |
 | 推送 | SMTP / 企业微信机器人 / Gotify |
-| 测试 | pytest（217 项） |
+| 测试 | pytest（219 项） |
 
 ## 目录结构
 

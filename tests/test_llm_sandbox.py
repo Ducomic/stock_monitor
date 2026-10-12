@@ -70,7 +70,7 @@ class TestASTValidation:
         """)
         err = _validate_code(code)
         assert err is not None
-        assert "禁止调用函数" in err
+        assert "禁止调用: exec" in err
 
     def test_forbidden_eval(self):
         code = textwrap.dedent("""
@@ -80,7 +80,7 @@ class TestASTValidation:
         """)
         err = _validate_code(code)
         assert err is not None
-        assert "禁止调用函数" in err
+        assert "禁止调用: eval" in err
 
     def test_forbidden_import(self):
         code = textwrap.dedent("""
@@ -143,7 +143,7 @@ class TestASTValidation:
         """)
         err = _validate_code(code)
         assert err is not None
-        assert "禁止调用函数" in err
+        assert "禁止调用: open" in err
 
     def test_forbidden_compile(self):
         code = textwrap.dedent("""
@@ -153,7 +153,7 @@ class TestASTValidation:
         """)
         err = _validate_code(code)
         assert err is not None
-        assert "禁止调用函数" in err
+        assert "禁止调用: compile" in err
 
     def test_global_statement(self):
         """global 声明被阻止。"""

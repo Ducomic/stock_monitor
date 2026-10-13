@@ -13,10 +13,19 @@ from app.web.server import create_app
 
 @pytest.fixture
 def client(app_config: AppConfig):
-    """创建 Flask 测试客户端。"""
-    app = create_app(app_config, monitor_loop=None)
-    app.config["TESTING"] = True
-    return app.test_client()
+    """创建 Flask 测试客户端。
+
+    集成测试会 POST /api/push/settings、操作标的分组，进而触发
+    config.yaml 写回（yaml.dump 会剥离注释并覆盖本地值），
+    这里打补丁禁止测试重写用户真实配置。
+    """
+    with patch("app.notify.manager.NotificationManager._write_config_to_file",
+               lambda self: None), \
+         patch("app.symbols.manager.SymbolManager._save_config_groups",
+               lambda self: None):
+        app = create_app(app_config, monitor_loop=None)
+        app.config["TESTING"] = True
+        yield app.test_client()
 
 
 class TestAuth:
